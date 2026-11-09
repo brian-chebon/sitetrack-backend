@@ -126,8 +126,9 @@ come out unique and consecutive.
 ## Performance at the brief's scale
 
 `docker compose run --rm seed` loads at least the brief's volumes: 5,000 users; 2,000 projects of up to
-50 members; 50,040 invitations; 500,000 tasks, with ten projects of exactly 3,000; 1,041,272 dependencies;
-20,000 materials; 400,000 deliveries holding 3,031,922 lines.
+50 members; 50,040 invitations; 500,000 tasks, with ten projects of exactly 3,000; about 1,041,000 dependencies;
+20,000 materials; 400,000 deliveries holding about 3,030,000 lines. Some sizes are drawn at random, so those two
+counts vary slightly from run to run.
 
 The seeded data also obeys every rule the API enforces, so the API can be judged against it:
 
@@ -139,45 +140,46 @@ The seeded data also obeys every rule the API enforces, so the API can be judged
 
 The seeder checks those invariants and every foreign key at the end. The whole database is about 700 MB.
 
-Every screen, measured over HTTP against that data. The client ran on the same 8-core machine as the compose
-stack, with Postgres configured as in `docker-compose.yml` for a small server (1 GB shared buffers, JIT off).
-The figures are milliseconds over 15 runs after a warm-up:
+Every screen, measured over HTTP against that data on one small server: Postgres and the API pinned together
+to the same two CPU cores (Docker `cpuset`), with 3 GB and 1 GB of memory, and Postgres configured as in
+`docker-compose.yml` (1 GB shared buffers, JIT off). The client (`tool/bench.dart` in the test container) ran on
+other cores of the machine. The figures are milliseconds over 15 runs after a warm-up:
 
 | Screen | Call | Median | Slowest |
 |---|---|---:|---:|
-| 3 Notifications | list, as user | 9 | 11 |
-| 3 Notifications | unread count (header badge) | 5 | 6 |
-| 4 Projects | all 2,000, as SuperAdmin, by name | 38 | 51 |
-| 4 Projects | all 2,000, by % done | 31 | 42 |
-| 4 Projects | all 2,000, by late tasks | 32 | 43 |
-| 4 Projects | only with late tasks | 33 | 47 |
-| 4 Projects | search "Muscat" | 28 | 35 |
-| 4 Projects | as user (40 projects) | 11 | 14 |
-| 5 Tasks | 3,000-task project, by ID | 17 | 27 |
-| 5 Tasks | by dependents count | 18 | 22 |
-| 5 Tasks | late and blocked | 8 | 11 |
-| 5 Tasks | date range + search | 6 | 8 |
-| 6 Task details | last task of a 3,000-task project (2,500 upstream) | 101 | 113 |
-| 6 Task details | first task of a 3,000-task project (~3,000 downstream) | 108 | 133 |
-| 6 Task details | ordinary project | 22 | 32 |
-| 7 Project store | by last delivery | 9 | 10 |
-| 7 Project store | search + category | 8 | 11 |
-| 8 Project deliveries | newest first | 24 | 29 |
-| 8 Project deliveries | incoming, delivered, 2025 | 20 | 26 |
-| 9 Members | members + invitations | 6 | 12 |
-| 10 Company stock | 20,000 materials by name | 23 | 29 |
-| 10 Company stock | by status | 23 | 38 |
-| 10 Company stock | low stock in one category | 16 | 24 |
-| 10 Company stock | search "rebar" | 24 | 32 |
-| 11 Company deliveries | newest first, of 400,000 | 17 | 21 |
-| 11 Company deliveries | next page by cursor | 21 | 25 |
-| 11 Company deliveries | in transit | 22 | 27 |
-| 11 Company deliveries | one project, incoming | 14 | 18 |
-| 11 Company deliveries | rejected, 2024 | 25 | 31 |
+| 3 Notifications | list, as user | 7 | 10 |
+| 3 Notifications | unread count (header badge) | 4 | 4 |
+| 4 Projects | all 2,000, as SuperAdmin, by name | 30 | 48 |
+| 4 Projects | all 2,000, by % done | 29 | 32 |
+| 4 Projects | all 2,000, by late tasks | 28 | 38 |
+| 4 Projects | only with late tasks | 28 | 39 |
+| 4 Projects | search "Muscat" | 23 | 26 |
+| 4 Projects | as user (40 projects) | 10 | 13 |
+| 5 Tasks | 3,000-task project, by ID | 17 | 30 |
+| 5 Tasks | by dependents count | 18 | 29 |
+| 5 Tasks | late and blocked | 6 | 9 |
+| 5 Tasks | date range + search | 6 | 7 |
+| 6 Task details | last task of a 3,000-task project (2,500 upstream) | 91 | 158 |
+| 6 Task details | first task of a 3,000-task project (~3,000 downstream) | 101 | 116 |
+| 6 Task details | ordinary project | 21 | 25 |
+| 7 Project store | by last delivery | 8 | 9 |
+| 7 Project store | search + category | 7 | 10 |
+| 8 Project deliveries | newest first | 18 | 19 |
+| 8 Project deliveries | incoming, delivered, 2025 | 19 | 21 |
+| 9 Members | members + invitations | 6 | 7 |
+| 10 Company stock | 20,000 materials by name | 18 | 20 |
+| 10 Company stock | by status | 18 | 24 |
+| 10 Company stock | low stock in one category | 15 | 19 |
+| 10 Company stock | search "rebar" | 22 | 23 |
+| 11 Company deliveries | newest first, of 400,000 | 17 | 27 |
+| 11 Company deliveries | next page by cursor | 17 | 20 |
+| 11 Company deliveries | in transit | 17 | 42 |
+| 11 Company deliveries | one project, incoming | 12 | 14 |
+| 11 Company deliveries | rejected, 2024 | 18 | 24 |
 
 Writes in the largest projects take 110–170 ms: creating a task waiting on the last of 3,000, adding a dependency,
 starting a task, marking it done. Most of that is the full task-details response they return; recomputing
-Blocked is a few milliseconds. A refused loop through all 3,000 tasks takes 15 ms. Sending and recording
+Blocked is a few milliseconds. A refused loop through all 3,000 tasks takes about 20 ms. Sending and recording
 deliveries take about 20 ms. Login takes about 230 ms, which is bcrypt doing its job.
 
 What keeps these fast: per-project counters (task counts by status, Blocked count, members), so the projects
@@ -258,7 +260,7 @@ Everything the brief leaves open, with what I chose and why.
 - **Optimistic concurrency for edits** (an `ETag` or version per project, task and material), so two people
   editing the same task cannot silently overwrite each other.
 - **Concurrent load testing** (k6 or similar) on hardware the size of the target server. The numbers above are
-  single-client latencies on a larger machine.
+  single-client latencies.
 - **Cheaper task details for huge graphs:** build the related-task JSON in Postgres, or page the upstream and
   downstream lists.
 - **Operations:** structured logs, request metrics, tracing, and the slow-query log in front of someone.
