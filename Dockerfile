@@ -13,6 +13,13 @@ RUN dart pub get --offline \
  && dart compile exe bin/server.dart -o /app/server
 
 
+# `docker compose run --rm test` runs the test suite against the db service.
+FROM build AS test
+COPY migrations migrations
+COPY test test
+CMD ["dart", "test"]
+
+
 FROM scratch
 COPY --from=build /runtime/ /
 COPY --from=build /app/server /app/server
