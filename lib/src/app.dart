@@ -13,7 +13,9 @@ import 'http/middleware.dart';
 import 'notifications/notification_routes.dart';
 import 'projects/member_routes.dart';
 import 'projects/project_routes.dart';
+import 'stock/company_store_routes.dart';
 import 'stock/material_routes.dart';
+import 'stock/project_store_routes.dart';
 import 'tasks/task_routes.dart';
 import 'users/user_routes.dart';
 
@@ -34,6 +36,8 @@ Handler buildApp(Database db, Config config) {
   final notifications = NotificationRoutes(db);
   final tasks = TaskRoutes(db);
   final materials = MaterialRoutes(db);
+  final companyStore = CompanyStoreRoutes(db);
+  final projectStore = ProjectStoreRoutes(db);
 
   final protected = Router(notFoundHandler: _notFound)
     ..post('/auth/logout', authRoutes.logout)
@@ -78,13 +82,47 @@ Handler buildApp(Database db, Config config) {
       '/projects/<projectId>/tasks/<taskId>/dependencies/<dependsOnId>',
       tasks.removeDependency,
     )
+    // Project store and its deliveries
+    ..get('/projects/<projectId>/store', projectStore.stock)
+    ..get('/projects/<projectId>/deliveries', projectStore.deliveries)
+    ..post('/projects/<projectId>/deliveries', projectStore.send)
+    ..get(
+      '/projects/<projectId>/deliveries/<deliveryId>',
+      projectStore.delivery,
+    )
+    ..post(
+      '/projects/<projectId>/deliveries/<deliveryId>/record',
+      projectStore.record,
+    )
+    ..post(
+      '/projects/<projectId>/deliveries/<deliveryId>/reject',
+      projectStore.reject,
+    )
+    ..post(
+      '/projects/<projectId>/deliveries/<deliveryId>/cancel',
+      projectStore.cancel,
+    )
     // Materials catalogue
     ..get('/materials', materials.list)
     ..get('/materials/categories', materials.categories)
     ..post('/materials', materials.create)
     ..get('/materials/<materialId>', materials.get)
     ..patch('/materials/<materialId>', materials.update)
-    ..delete('/materials/<materialId>', materials.remove);
+    ..delete('/materials/<materialId>', materials.remove)
+    // Company store
+    ..get('/company-store/stock', companyStore.stock)
+    ..patch('/company-store/stock/<materialId>', companyStore.setReorderPoint)
+    ..post('/company-store/stock-additions', companyStore.addStock)
+    ..get('/company-store/projects', companyStore.projects)
+    ..get('/company-store/deliveries', companyStore.deliveries)
+    ..post('/company-store/deliveries', companyStore.send)
+    ..get('/company-store/deliveries/<deliveryId>', companyStore.delivery)
+    ..post('/company-store/deliveries/<deliveryId>/record', companyStore.record)
+    ..post('/company-store/deliveries/<deliveryId>/reject', companyStore.reject)
+    ..post(
+      '/company-store/deliveries/<deliveryId>/cancel',
+      companyStore.cancel,
+    );
 
   final root = Router(notFoundHandler: _notFound)
     ..get('/health', (Request request) async {
