@@ -8,8 +8,14 @@ import 'package:sitetrack/src/db/database.dart';
 import 'package:sitetrack/src/db/migrator.dart';
 
 /// Starts the API: waits for Postgres, applies pending migrations, serves.
-Future<void> main() async {
+///
+/// `server healthcheck` instead probes a running server's /health and exits 0
+/// when it answers, for the container health check (the image has no curl).
+Future<void> main(List<String> args) async {
   final config = Config.fromEnvironment();
+  if (args.firstOrNull == 'healthcheck') {
+    exit(await _healthcheck(config.port));
+  }
 
   final db = Database.open(
     config.databaseUrl,
@@ -46,4 +52,18 @@ Future<void> main() async {
 
   sigterm = ProcessSignal.sigterm.watch().listen(shutdown);
   sigint = ProcessSignal.sigint.watch().listen(shutdown);
+}
+
+Future<int> _healthcheck(int port) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+  try {
+    final request = await client.get('127.0.0.1', port, '/health');
+    final response = await request.close();
+    await response.drain<void>();
+    return response.statusCode == HttpStatus.ok ? 0 : 1;
+  } on Object {
+    return 1;
+  } finally {
+    client.close(force: true);
+  }
 }

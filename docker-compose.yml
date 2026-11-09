@@ -1,0 +1,46 @@
+# `docker compose up` starts Postgres and the API. The API applies the schema
+# on start, so the stack is ready to use with no other steps.
+name: sitetrack
+
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: sitetrack
+      POSTGRES_USER: sitetrack
+      POSTGRES_PASSWORD: sitetrack
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/<major>/.
+      - db-data:/var/lib/postgresql
+    # Not published to the host, so a local Postgres on 5432 cannot clash.
+    # Use `docker compose exec db psql -U sitetrack` to look inside.
+    healthcheck:
+      # Over TCP on purpose: during first-time init the image runs a temporary
+      # server on the Unix socket only, which must not count as ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U sitetrack -d sitetrack"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: sitetrack-api
+    environment:
+      DATABASE_URL: postgres://sitetrack:sitetrack@db:5432/sitetrack?sslmode=disable
+      PORT: "8080"
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/server", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  db-data:

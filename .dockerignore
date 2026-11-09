@@ -1,0 +1,10 @@
+.git/
+.dart_tool/
+build/
+.idea/
+.vscode/
+.env
+
+# The assignment brief stays local
+brief/
+*.pdf
