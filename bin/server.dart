@@ -43,7 +43,6 @@ Future<void> main(List<String> args) async {
     InternetAddress.anyIPv4,
     config.port,
   );
-  server.autoCompress = true;
   stdout.writeln('SiteTrack API listening on port ${server.port}');
 
   // Docker sends SIGTERM on `docker compose down`; finish in-flight requests

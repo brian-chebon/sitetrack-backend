@@ -30,9 +30,10 @@ class CompanyStoreRoutes {
   static const _stockSorts = {
     'name': 'lower(m.name)',
     'quantity': 'cs.quantity',
-    // Most urgent first when ascending.
+    // Most urgent first when ascending. Written exactly as in
+    // company_stock_urgency_idx, or the planner will not use the index.
     'status':
-        "CASE cs.status WHEN 'out_of_stock' THEN 0 WHEN 'low_stock' THEN 1 ELSE 2 END",
+        "(CASE cs.status WHEN 'out_of_stock' THEN 0 WHEN 'low_stock' THEN 1 ELSE 2 END)",
   };
 
   static const _deliveryStatuses = {
@@ -57,30 +58,48 @@ class CompanyStoreRoutes {
     final page = query.page();
     query.throwIfInvalid();
 
-    final rows = await _db.query(
-      '''
-      SELECT m.id, m.name, m.category, m.unit, cs.quantity, cs.in_transit,
-             cs.reorder_point, cs.status, count(*) OVER () AS total
+    // The total is counted separately: a count(*) OVER () would make the
+    // page query read and sort all 20,000 materials to return 50.
+    const filters = '''
         FROM company_stock cs
         JOIN materials m ON m.id = cs.material_id
        WHERE m.deleted_at IS NULL
          AND (@pattern::text IS NULL OR m.name ILIKE @pattern::text)
          AND (@category::text IS NULL OR m.category = @category::text)
-         AND (@statuses::text[] IS NULL OR cs.status = ANY(@statuses::text[]))
-       ${orderBy(sort.key, descending: sort.descending, tieBreaker: 'm.id')}
-       LIMIT @limit OFFSET @offset''',
-      {
-        'pattern': containsPattern(search),
-        'category': category,
-        'statuses': statuses,
-        'limit': page.limit,
-        'offset': page.offset,
-      },
+         AND (@statuses::text[] IS NULL OR cs.status = ANY(@statuses::text[]))''';
+    final parameters = {
+      'pattern': containsPattern(search),
+      'category': category,
+      'statuses': statuses,
+    };
+    final count = await _db.query('SELECT count(*) $filters', parameters);
+
+    // Without a search term, the indexes on name, urgency and quantity give
+    // the page directly. With one, the matches are found first (trigram
+    // index) and only they are sorted: walking the name index and testing
+    // every name is slow when the matches sit late in the alphabet.
+    const columns = '''
+        m.id, m.name, m.category, m.unit, cs.quantity, cs.in_transit,
+        cs.reorder_point, cs.status, cs.material_id''';
+    final order = orderBy(
+      sort.key,
+      descending: sort.descending,
+      tieBreaker: 'cs.material_id',
+    );
+    final rows = await _db.query(
+      search == null
+          ? 'SELECT $columns $filters $order LIMIT @limit OFFSET @offset'
+          : '''
+            WITH matched AS MATERIALIZED (SELECT $columns $filters)
+            SELECT * FROM matched cs
+            ${order.replaceAll('lower(m.name)', 'lower(cs.name)')}
+            LIMIT @limit OFFSET @offset''',
+      {...parameters, 'limit': page.limit, 'offset': page.offset},
     );
     return jsonResponse(
       pageJson(
         [for (final row in rows) _stockJson(row.toColumnMap())],
-        total: rows.isEmpty ? 0 : rows.first.toColumnMap()['total'] as int,
+        total: count.single[0]! as int,
         limit: page.limit,
         offset: page.offset,
       ),

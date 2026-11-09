@@ -398,7 +398,8 @@ void main() {
       expect(await ids('from=2026-03-15&to=2026-03-31'), [b]);
       expect(await ids('search=slab'), [b]);
       expect(await ids('search=T-0003'), [c]);
-      expect(await ids('sort=-dependents'), [a, b, c]);
+      // Ties sort in the same direction as the key: by ID, descending.
+      expect(await ids('sort=-dependents'), [a, c, b]);
       expect(await ids('sort=name'), [c, a, b]);
       expect(await ids('sort=-endDate&limit=1'), [c]);
       expect(await ids('late=true'), isNotEmpty); // all 2026 dates are past

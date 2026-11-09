@@ -144,6 +144,7 @@ Handler buildApp(Database db, Config config) {
     pipeline = pipeline.addMiddleware(logRequestTimings());
   }
   return pipeline
+      .addMiddleware(gzipLargeResponses())
       .addMiddleware(cors())
       .addMiddleware(handleErrors())
       .addHandler(root.call);

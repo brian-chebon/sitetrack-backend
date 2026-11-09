@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:shelf/shelf.dart';
 
@@ -53,3 +54,32 @@ Middleware cors() {
     return response.change(headers: headers);
   };
 }
+
+/// Gzips JSON bodies of 8 KB or more for clients that accept it. Task details
+/// in the largest projects list ~2,500 related tasks (~430 KB), which
+/// compress about tenfold. (dart:io's autoCompress does not apply here,
+/// because shelf sets a content length.)
+Middleware gzipLargeResponses() =>
+    (inner) => (request) async {
+      final response = await inner(request);
+      final accepts =
+          request.headers['accept-encoding']?.contains('gzip') ?? false;
+      final length = response.contentLength;
+      if (!accepts ||
+          length == null ||
+          length < 8192 ||
+          response.headers.containsKey('content-encoding')) {
+        return response;
+      }
+      final bytes = BytesBuilder(copy: false);
+      await response.read().forEach(bytes.add);
+      final compressed = gzip.encode(bytes.takeBytes());
+      return response.change(
+        body: compressed,
+        headers: {
+          'content-encoding': 'gzip',
+          'content-length': '${compressed.length}',
+          'vary': 'accept-encoding',
+        },
+      );
+    };
