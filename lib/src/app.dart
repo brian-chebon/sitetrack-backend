@@ -13,6 +13,7 @@ import 'http/middleware.dart';
 import 'notifications/notification_routes.dart';
 import 'projects/member_routes.dart';
 import 'projects/project_routes.dart';
+import 'tasks/task_routes.dart';
 import 'users/user_routes.dart';
 
 /// Builds the API's request handler.
@@ -30,6 +31,7 @@ Handler buildApp(Database db, Config config) {
   final projects = ProjectRoutes(db);
   final members = MemberRoutes(db);
   final notifications = NotificationRoutes(db);
+  final tasks = TaskRoutes(db);
 
   final protected = Router(notFoundHandler: _notFound)
     ..post('/auth/logout', authRoutes.logout)
@@ -56,6 +58,23 @@ Handler buildApp(Database db, Config config) {
     ..delete(
       '/projects/<projectId>/invitations/<invitationId>',
       members.withdraw,
+    )
+    // Tasks, dependencies and status actions
+    ..get('/projects/<projectId>/tasks', tasks.list)
+    ..post('/projects/<projectId>/tasks', tasks.create)
+    ..get('/projects/<projectId>/tasks/<taskId>', tasks.get)
+    ..patch('/projects/<projectId>/tasks/<taskId>', tasks.update)
+    ..delete('/projects/<projectId>/tasks/<taskId>', tasks.remove)
+    ..post('/projects/<projectId>/tasks/<taskId>/start', tasks.start)
+    ..post('/projects/<projectId>/tasks/<taskId>/complete', tasks.complete)
+    ..post('/projects/<projectId>/tasks/<taskId>/reopen', tasks.reopen)
+    ..put(
+      '/projects/<projectId>/tasks/<taskId>/dependencies/<dependsOnId>',
+      tasks.addDependency,
+    )
+    ..delete(
+      '/projects/<projectId>/tasks/<taskId>/dependencies/<dependsOnId>',
+      tasks.removeDependency,
     );
 
   final root = Router(notFoundHandler: _notFound)
