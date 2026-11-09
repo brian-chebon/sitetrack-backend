@@ -79,7 +79,7 @@ class AuthService {
   final Config _config;
   final PasswordHasher _passwords;
   final AccessTokens _tokens;
-  final _throttle = LoginThrottle();
+  final _limits = LoginLimits();
 
   static const invalidCredentials = 'invalid_credentials';
 
@@ -123,17 +123,19 @@ class AuthService {
   }
 
   /// Logs in, or throws the same 401 whether the email is unknown or the
-  /// password is wrong, after the same amount of bcrypt work.
+  /// password is wrong, after the same amount of bcrypt work. [address] is
+  /// where the request came from, for [LoginLimits].
   Future<(UserProfile, SessionTokens)> login({
     required String email,
     required String password,
+    required String address,
   }) async {
     final key = normalizeEmail(email);
-    if (_throttle.isLocked(key)) {
+    if (_limits.isLocked(key, address)) {
       throw ApiError(
         429,
         'too_many_attempts',
-        'Too many failed logins for this email; try again in a few minutes',
+        'Too many failed logins; try again in a few minutes',
       );
     }
     final rows = await _db.query(
@@ -150,10 +152,10 @@ class AuthService {
       ok = await _passwords.verify(password, row['password_hash'] as String);
     }
     if (!ok) {
-      _throttle.recordFailure(key);
+      _limits.recordFailure(key, address);
       throw ApiError(401, invalidCredentials, 'Email or password is incorrect');
     }
-    _throttle.reset(key);
+    _limits.recordSuccess(key, address);
     final user = UserProfile.fromRow(row!);
     final tokens = await _db.transaction((tx) => _startSession(tx, user.id));
     return (user, tokens);

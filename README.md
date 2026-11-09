@@ -76,8 +76,10 @@ small change (the role field on the register screen goes away), and I would make
   colleagues (people who share a project with them); a stranger is found only by their exact email.
 - **Passwords** are bcrypt-hashed (cost 10, on a worker isolate so hashing never stalls other requests) and never
   returned. A login with an unknown email does the same bcrypt work as one with a wrong password, and both get
-  the same 401. Ten failures for one email within 15 minutes lock that email out until the oldest failure
-  is 15 minutes old, whether or not the email is registered.
+  the same 401. Ten failures for one email from one network address within 15 minutes refuse that email
+  from that address, and a hundred from one address refuse the address whatever the email, until the oldest
+  failure is 15 minutes old. Both count whether or not the email is registered. Keying on the address as well
+  means a stranger guessing at someone's password cannot lock the real owner out.
 
 ### IDs
 
@@ -235,7 +237,9 @@ Everything the brief leaves open, with what I chose and why.
 - **Removed projects and materials stay as rows**, so every read filters on `deleted_at`. In return, numbers are
   never reused and delivery history stays whole.
 - **The login lockout lives in memory**, so it resets on restart and would not be shared across several API
-  processes. That is fine for one small server; more processes would need it in Postgres or Redis.
+  processes. That is fine for one small server; more processes would need it in Postgres or Redis. It keys on
+  the connecting address and ignores `X-Forwarded-For`, which any client can forge. Behind a reverse proxy it
+  would read the proxy's header instead, and someone guessing from many addresses gets ten tries per address.
 - **CORS allows any origin.** Tokens travel in the `Authorization` header, not in cookies, so this exposes no one
   to cross-site request forgery. A deployment would still list its frontend's origin.
 - **The seeder switches off per-row foreign-key triggers for its own session** (which needs the superuser that

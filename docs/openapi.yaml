@@ -151,8 +151,10 @@ paths:
       summary: Sign in with email and password
       description: |
         An unknown email and a wrong password give the same 401, after the
-        same amount of work. Ten failures for one email within 15 minutes
-        lock that email for a while (429), registered or not.
+        same amount of work. Ten failures for one email from one address
+        within 15 minutes refuse that email from that address, and a
+        hundred from one address refuse the address (429), registered or
+        not.
       security: []
       requestBody:
         required: true

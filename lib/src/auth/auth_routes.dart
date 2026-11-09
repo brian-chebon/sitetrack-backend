@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:shelf/shelf.dart';
 
 import '../http/api_error.dart';
@@ -57,7 +59,11 @@ class AuthRoutes {
     final password = body.rawString('password', maxLength: 200);
     body.throwIfInvalid();
 
-    final (user, tokens) = await _auth.login(email: email, password: password);
+    final (user, tokens) = await _auth.login(
+      email: email,
+      password: password,
+      address: _clientAddress(request),
+    );
     return jsonResponse({'user': user.toJson(), ...tokens.toJson()});
   }
 
@@ -76,6 +82,15 @@ class AuthRoutes {
     await _auth.logout(callerOf(request));
     return Response(204);
   }
+}
+
+/// The network address a request came from, or `unknown` when it did not
+/// come over a socket (the in-process tests). Forwarded-for headers are
+/// ignored: any client can set them. Behind a reverse proxy, read the
+/// proxy's header here instead, and trust it only from the proxy.
+String _clientAddress(Request request) {
+  final info = request.context['shelf.io.connection_info'];
+  return info is HttpConnectionInfo ? info.remoteAddress.address : 'unknown';
 }
 
 /// Authenticates every request it wraps from its `Authorization: Bearer`
