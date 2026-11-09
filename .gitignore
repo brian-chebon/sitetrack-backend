@@ -1,0 +1,15 @@
+# Dart
+.dart_tool/
+build/
+pubspec_overrides.yaml
+
+# Local environment
+.env
+
+# Editors
+.idea/
+.vscode/
+
+# The assignment brief stays local; it is not published with the code
+/brief/
+*.pdf
