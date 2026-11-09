@@ -27,7 +27,7 @@ void main() {
   ) async {
     final invite = await api().post(
       '/v1/projects/$projectId/invitations',
-      body: {'userId': user.id},
+      body: {'email': user.email},
       as: admin,
     );
     expect(invite.status, 201, reason: '$invite');
@@ -333,7 +333,7 @@ void main() {
         for (final id in [first, second]) {
           await api().post(
             '/v1/projects/$id/invitations',
-            body: {'userId': invitee.id},
+            body: {'email': invitee.email},
             as: owner,
           );
         }
@@ -416,23 +416,33 @@ void main() {
         as: owner,
       );
       expect(existing.errorCode, 'already_member');
-      await api().post(
+      // A stranger's user ID finds no one, exactly like an unknown ID, so
+      // inviting IDs one by one cannot reveal people's emails. Their email
+      // still reaches them.
+      final strangerById = await api().post(
         '/v1/projects/$id/invitations',
         body: {'userId': other.id},
         as: owner,
       );
-      final twice = await api().post(
-        '/v1/projects/$id/invitations',
-        body: {'userId': other.id},
-        as: owner,
-      );
-      expect(twice.errorCode, 'already_invited');
-      final nobody = await api().post(
+      expect(strangerById.status, 400);
+      final unknownId = await api().post(
         '/v1/projects/$id/invitations',
         body: {'userId': 999999},
         as: owner,
       );
-      expect(nobody.status, 400);
+      expect(strangerById.text, unknownId.text);
+      final byEmail = await api().post(
+        '/v1/projects/$id/invitations',
+        body: {'email': other.email},
+        as: owner,
+      );
+      expect(byEmail.status, 201, reason: '$byEmail');
+      final twice = await api().post(
+        '/v1/projects/$id/invitations',
+        body: {'email': other.email},
+        as: owner,
+      );
+      expect(twice.errorCode, 'already_invited');
     });
 
     test('a project always keeps at least one admin', () async {

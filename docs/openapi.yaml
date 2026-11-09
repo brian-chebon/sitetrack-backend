@@ -237,6 +237,11 @@ paths:
     get:
       tags: [Accounts]
       summary: Find people to invite, by name or email
+      description: |
+        Searches the caller and everyone they share a project with
+        (SuperAdmins search everyone). A search that is a whole email address
+        also finds that one person, so anyone registered can be invited; a
+        partial email or an empty search never lists strangers.
       parameters:
         - $ref: '#/components/parameters/Search'
         - $ref: '#/components/parameters/Limit'
@@ -564,7 +569,11 @@ paths:
           application/json:
             schema:
               type: object
-              description: Give userId or email.
+              description: |
+                Give userId or email. A userId only finds someone the admin
+                can already find in `GET /v1/users` (a colleague); anyone else
+                is invited by email. An unknown or unreachable userId is the
+                same 400.
               properties:
                 userId: {type: integer}
                 email: {type: string}

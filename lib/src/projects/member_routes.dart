@@ -7,6 +7,7 @@ import '../db/database.dart';
 import '../http/api_error.dart';
 import '../http/json.dart';
 import '../http/validation.dart';
+import '../users/visible_users.dart';
 import 'project_access.dart';
 
 /// The project members screen: members, unanswered invitations, and the
@@ -76,6 +77,10 @@ class MemberRoutes {
 
   /// `POST /v1/projects/{projectId}/invitations` with userId or email.
   /// Project admins only.
+  ///
+  /// A userId only finds someone the admin may already look up
+  /// ([visibleUserSql]); anyone else is invited by email. Otherwise inviting
+  /// IDs one after another would reveal every registered email.
   Future<Response> invite(Request request, String projectId) async {
     final caller = callerOf(request);
     final body = BodyReader(await readJsonObject(request));
@@ -103,9 +108,12 @@ class MemberRoutes {
                           WHERE i.project_id = @projectId AND i.invitee_id = u.id
                             AND i.status = 'pending') AS is_invited
             FROM users u
-           WHERE u.id = @userId::bigint OR u.email = @email::text'''),
+           WHERE (u.id = @userId::bigint AND ${visibleUserSql('u.id')})
+              OR u.email = @email::text'''),
         parameters: {
           'projectId': access.id,
+          'callerId': caller.id,
+          'superAdmin': caller.isSuperAdmin,
           'userId': userId,
           'email': email == null ? null : AuthService.normalizeEmail(email),
         },

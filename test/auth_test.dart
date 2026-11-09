@@ -264,6 +264,61 @@ void main() {
     expect(found.text, isNot(contains('password')));
   });
 
+  test('the user directory shows colleagues; strangers need their exact '
+      'email', () async {
+    final me = await api().user(name: 'Dirtest Me');
+    final colleague = await api().user(name: 'Dirtest Colleague');
+    final stranger = await api().user(name: 'Dirtest Stranger');
+    final superAdmin = await api().user(role: 'super_admin');
+
+    final project = await api().post(
+      '/v1/projects',
+      body: {
+        'name': 'Directory site',
+        'plannedStart': '2026-01-01',
+        'plannedEnd': '2026-12-31',
+      },
+      as: me,
+    );
+    final invite = await api().post(
+      '/v1/projects/${project.body['id']}/invitations',
+      body: {'email': colleague.email},
+      as: me,
+    );
+    await api().post(
+      '/v1/invitations/${invite.body['id']}/accept',
+      as: colleague,
+    );
+
+    List<Object?> names(ApiResponse response) => [
+      for (final item in response.items) (item! as Map)['name'],
+    ];
+
+    final byName = await api().get('/v1/users?search=Dirtest', as: me);
+    expect(names(byName), ['Dirtest Colleague', 'Dirtest Me']);
+    expect(byName.body['total'], 2);
+
+    // Part of an email, or everyone at once, still shows only colleagues.
+    final domain = stranger.email.substring(stranger.email.indexOf('@'));
+    final byDomain = await api().get('/v1/users?search=$domain', as: me);
+    expect(names(byDomain), isNot(contains('Dirtest Stranger')));
+    final everyone = await api().get('/v1/users?limit=100', as: me);
+    expect(names(everyone), isNot(contains('Dirtest Stranger')));
+
+    final byEmail = await api().get(
+      '/v1/users?search=${Uri.encodeQueryComponent(stranger.email.toUpperCase())}',
+      as: me,
+    );
+    expect(names(byEmail), ['Dirtest Stranger']);
+
+    // SuperAdmins assign app roles, so they can find anyone.
+    final asSuperAdmin = await api().get(
+      '/v1/users?search=Dirtest',
+      as: superAdmin,
+    );
+    expect(asSuperAdmin.body['total'], 3);
+  });
+
   test(
     'the API description and docs page are served without a session',
     () async {

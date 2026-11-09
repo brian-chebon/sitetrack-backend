@@ -110,7 +110,7 @@ void main() {
     project = created.body['id']! as String;
     final invite = await api().post(
       '/v1/projects/$project/invitations',
-      body: {'userId': member.id},
+      body: {'email': member.email},
       as: admin,
     );
     await api().post('/v1/invitations/${invite.body['id']}/accept', as: member);

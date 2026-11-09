@@ -72,7 +72,8 @@ small change (the role field on the register screen goes away), and I would make
 - **Other boundaries.** Inside a project, members work with tasks, the store and deliveries; only project admins
   change the project, its members and its invitations (403 for other members, who already know the project
   exists). Only the invitee can answer an invitation; for anyone else it does not exist. The company store
-  answers 403 to everyone but store managers and SuperAdmins.
+  answers 403 to everyone but store managers and SuperAdmins. The people directory only lists the caller's
+  colleagues (people who share a project with them); a stranger is found only by their exact email.
 - **Passwords** are bcrypt-hashed (cost 10, on a worker isolate so hashing never stalls other requests) and never
   returned. A login with an unknown email does the same bcrypt work as one with a wrong password, and both get
   the same 401. Ten failures for one email within 15 minutes lock that email out until the oldest failure
@@ -207,7 +208,7 @@ Everything the brief leaves open, with what I chose and why.
 | Today, for Late | The date in `APP_TIMEZONE` (default UTC), set as the database session time zone | Late must be the same for every viewer, or the projects screen would sort differently per person. "Passed" means strictly before today. |
 | Task date-range filter | Tasks whose planned period overlaps the range | It answers "what is planned between these dates". Delivery date filters use the date sent. |
 | Unread notifications | Pending and not yet seen. Opening the screen calls `POST /v1/notifications/read`; answering marks one read; one withdrawn before it was seen stops counting | The badge should mean "something needs you". The count is in `GET /v1/me` and its own endpoint. |
-| Finding people to invite | Invite by user ID or email; any signed-in user can search the directory (names and emails) | Any user can create a project and so become an admin who may invite "any other registered user". |
+| Finding people to invite | The directory searches you and the people you share a project with; anyone else is found, and invited, by their exact email. SuperAdmins search everyone | Admins may invite "any other registered user", and anyone can create a project and so become an admin. An open directory, or invites by any user ID, would let anyone who signs up list every registered email. |
 | Leaving a project | Members can remove themselves; the last admin cannot leave, be removed or be demoted | Keeps the "at least one admin" rule while letting people leave. |
 | Registration with a taken email | 409 `email_taken` | Unavoidable without email verification. The brief's rule is about login, where it is honoured. |
 | Store managers and projects | They see every project's ID and name in the company store (to deliver to it), nothing inside it | Screen 11 has managers deliver to any project and filter by project. |

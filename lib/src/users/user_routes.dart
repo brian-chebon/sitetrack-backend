@@ -7,6 +7,7 @@ import '../db/database.dart';
 import '../http/api_error.dart';
 import '../http/json.dart';
 import '../http/validation.dart';
+import 'visible_users.dart';
 
 /// The caller's profile, the people directory used to pick invitees, and
 /// app role changes.
@@ -41,25 +42,38 @@ class UserRoutes {
 
   /// `GET /v1/users?search=`: people to invite, by name or email.
   ///
-  /// Any project admin may invite any registered user, and anyone can create a
-  /// project and so become an admin, so every signed-in user may search the
-  /// directory. It shows names and emails only.
+  /// It searches the caller and the people they share a project with
+  /// ([visibleUserSql]); SuperAdmins search everyone. A search that is a
+  /// whole email address also finds that one person, so anyone registered
+  /// can still be invited. It shows names and emails only.
   Future<Response> search(Request request) async {
+    final caller = callerOf(request);
     final query = QueryReader(request.url.queryParameters);
     final search = query.search();
     final page = query.page(defaultLimit: 20);
     query.throwIfInvalid();
 
+    final exactEmail = search != null && search.contains('@')
+        ? AuthService.normalizeEmail(search)
+        : null;
     final rows = await _db.query(
       '''
-      SELECT id, name, email, count(*) OVER () AS total
-        FROM users
-       WHERE @search::text IS NULL
-          OR name ILIKE '%' || @search || '%'
-          OR email ILIKE '%' || @search || '%'
-       ORDER BY name, id
+      SELECT u.id, u.name, u.email, count(*) OVER () AS total
+        FROM users u
+       WHERE (${visibleUserSql('u.id')} OR u.email = @exactEmail::text)
+         AND (@search::text IS NULL
+              OR u.name ILIKE '%' || @search || '%'
+              OR u.email ILIKE '%' || @search || '%')
+       ORDER BY u.name, u.id
        LIMIT @limit OFFSET @offset''',
-      {'search': search, 'limit': page.limit, 'offset': page.offset},
+      {
+        'callerId': caller.id,
+        'superAdmin': caller.isSuperAdmin,
+        'exactEmail': exactEmail,
+        'search': search,
+        'limit': page.limit,
+        'offset': page.offset,
+      },
     );
     final items = [
       for (final row in rows.map((r) => r.toColumnMap()))
