@@ -94,9 +94,20 @@ Future<void> main(List<String> args) async {
     );
     await seeder.run(hash);
 
+    final summary = await seeder.summary();
     stdout.writeln('\nRows:');
-    for (final MapEntry(:key, :value) in (await seeder.summary()).entries) {
+    for (final MapEntry(:key, :value) in summary.entries) {
       stdout.writeln('  ${key.padRight(38)} ${value.toString().padLeft(9)}');
+    }
+    // The data must obey the API's own rules, or it proves nothing.
+    for (final invariant in [
+      'started_tasks_waiting_on_unfinished',
+      'company_stock_mismatches',
+    ]) {
+      if (summary[invariant] != 0) {
+        stderr.writeln('Seed check failed: $invariant = ${summary[invariant]}');
+        exit(1);
+      }
     }
     stdout.writeln(
       '''

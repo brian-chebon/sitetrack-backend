@@ -11,7 +11,7 @@ import 'package:sitetrack/src/db/migrator.dart';
 import 'package:test/test.dart';
 
 /// Where tests find a Postgres server they may create databases on. Defaults
-/// to the throwaway container described in the README's testing section.
+/// to the throwaway container described in the README (see "Tests").
 final _serverUrl =
     Platform.environment['TEST_DATABASE_URL'] ??
     'postgres://sitetrack:sitetrack@127.0.0.1:55432/postgres?sslmode=disable';
