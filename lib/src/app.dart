@@ -8,6 +8,7 @@ import 'auth/tokens.dart';
 import 'config.dart';
 import 'db/database.dart';
 import 'http/api_error.dart';
+import 'http/docs_routes.dart';
 import 'http/json.dart';
 import 'http/middleware.dart';
 import 'notifications/notification_routes.dart';
@@ -30,6 +31,7 @@ Handler buildApp(Database db, Config config) {
   final auth = AuthService(db, config, passwords, tokens);
 
   final authRoutes = AuthRoutes(auth);
+  final docs = DocsRoutes(config.docsPath);
   final users = UserRoutes(db);
   final projects = ProjectRoutes(db);
   final members = MemberRoutes(db);
@@ -129,6 +131,8 @@ Handler buildApp(Database db, Config config) {
       await db.query('SELECT 1');
       return jsonResponse({'status': 'ok'});
     })
+    ..get('/openapi.yaml', docs.spec)
+    ..get('/docs', docs.page)
     ..post('/v1/auth/register', authRoutes.register)
     ..post('/v1/auth/login', authRoutes.login)
     ..post('/v1/auth/refresh', authRoutes.refresh)

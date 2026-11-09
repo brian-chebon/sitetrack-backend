@@ -9,6 +9,7 @@ class Config {
     required this.databaseUrl,
     required this.dbPoolSize,
     required this.migrationsDir,
+    required this.docsPath,
     required this.jwtSecret,
     required this.jwtSecretGenerated,
     required this.bcryptCost,
@@ -36,6 +37,7 @@ class Config {
           'postgres://sitetrack:sitetrack@localhost:5432/sitetrack?sslmode=disable',
       dbPoolSize: _int(env, 'DB_POOL_SIZE', 10),
       migrationsDir: env['MIGRATIONS_DIR'] ?? 'migrations',
+      docsPath: env['OPENAPI_PATH'] ?? 'docs/openapi.yaml',
       jwtSecret: (secret == null || secret.isEmpty) ? _randomSecret() : secret,
       jwtSecretGenerated: secret == null || secret.isEmpty,
       bcryptCost: bcryptCost,
@@ -55,6 +57,9 @@ class Config {
 
   /// Directory holding the numbered `.sql` migration files.
   final String migrationsDir;
+
+  /// The OpenAPI description served at /openapi.yaml and rendered at /docs.
+  final String docsPath;
 
   /// HMAC key for access tokens. When JWT_SECRET is not set, a random key is
   /// made at startup: access tokens then stop verifying after a restart, and

@@ -14,10 +14,13 @@ RUN dart pub get --offline \
  && dart compile exe bin/seed.dart -o /app/seed
 
 
-# `docker compose run --rm test` runs the test suite against the db service.
+# `docker compose run --rm test` runs the test suite against the db service;
+# `docker compose run --rm test dart run tool/bench.dart` times the screens.
 FROM build AS test
 COPY migrations migrations
+COPY docs docs
 COPY test test
+COPY tool tool
 CMD ["dart", "test"]
 
 
@@ -26,10 +29,12 @@ COPY --from=build /runtime/ /
 COPY --from=build /app/server /app/server
 COPY --from=build /app/seed /app/seed
 COPY migrations /app/migrations
+COPY docs/openapi.yaml /app/docs/openapi.yaml
 
 WORKDIR /app
 ENV PORT=8080 \
-    MIGRATIONS_DIR=/app/migrations
+    MIGRATIONS_DIR=/app/migrations \
+    OPENAPI_PATH=/app/docs/openapi.yaml
 EXPOSE 8080
 # nobody:nogroup; the API needs no privileges.
 USER 65534:65534

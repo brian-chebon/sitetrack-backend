@@ -1,0 +1,1632 @@
+openapi: 3.1.0
+info:
+  title: SiteTrack API
+  version: 1.0.0
+  description: |
+    Backend for SiteTrack, a construction project and materials tracker.
+    Every endpoint except register, login, refresh and `/health` needs an
+    access token.
+
+    ## Signing in
+
+    1. `POST /v1/auth/register` or `POST /v1/auth/login` returns an
+       `accessToken` (valid 15 minutes) and a `refreshToken`.
+    2. Send `Authorization: Bearer <accessToken>` on every request.
+    3. Before the access token expires (or when a call answers 401 with code
+       `token_expired`), call `POST /v1/auth/refresh` with the refresh token.
+       You get a new pair; the old refresh token stops working. Each refresh
+       extends the session by 7 days, up to 30 days after login, so an active
+       user is never asked to log in again within that time.
+    4. `POST /v1/auth/logout` ends the session at once (code `session_ended`
+       on any later call). Other devices stay signed in.
+
+    The caller's role and project memberships are read from the database on
+    every request, so removing someone from a project or changing their role
+    applies to their very next request.
+
+    ## IDs
+
+    Projects are `PRJ-0042`; tasks are `PRJ-0042-T-0137`. Past `PRJ-9999` the
+    number simply grows (`PRJ-10000`). IDs never change and are never reused.
+    Users, invitations, materials and deliveries have integer IDs.
+
+    ## Who can see what
+
+    | Role | Projects | Company store |
+    |---|---|---|
+    | `user` | only those they are a member of | no |
+    | `store_manager` | only those they are a member of | yes |
+    | `super_admin` | every project | yes |
+
+    A project the caller cannot see answers **404 exactly as if it did not
+    exist**, on every project route; every list and count includes only what
+    the caller may see. Inside a project, members (and SuperAdmins) work with
+    tasks, the store and deliveries; only **project admins** change the
+    project, its members and invitations (403 for other members). The company
+    store answers 403 to everyone but store managers and SuperAdmins.
+
+    ## Errors
+
+    Errors are JSON: `{"error": {"code": "...", "message": "...", "details": ...}}`.
+    `message` is for people; branch on `code`. A 400 lists every invalid
+    field at once under `details.fields`.
+
+    ## Lists
+
+    Lists take `limit` (1-200, default 50; 20 for notifications and users)
+    and `offset`, and return `{items, total, limit, offset}`. The company
+    store's delivery list spans hundreds of thousands of rows, so it pages by
+    cursor instead: pass `nextCursor` back as `cursor`; there is no total.
+    `sort=key` sorts ascending, `sort=-key` descending. Multi-value filters
+    are comma-separated (`status=not_started,in_progress`). Dates are
+    `YYYY-MM-DD`; timestamps are ISO 8601 in UTC. "Today" for Late tasks is
+    the date in the company time zone (`APP_TIMEZONE`, UTC by default).
+
+    ## Screens
+
+    | Screen | Calls |
+    |---|---|
+    | 1 Log in | `POST /v1/auth/login` |
+    | 2 Register | `POST /v1/auth/register` |
+    | Header badge, every page | `GET /v1/notifications/unread-count` (also in `GET /v1/me`) |
+    | 3 Notifications | `GET /v1/notifications`, `POST /v1/notifications/read`, `POST /v1/invitations/{id}/accept` and `/reject` |
+    | 4 Projects | `GET /v1/projects`, `POST /v1/projects` |
+    | 5 Project: Tasks | `GET /v1/projects/{projectId}/tasks`, `POST` to create |
+    | 6 Task details | `GET /v1/projects/{projectId}/tasks/{taskId}`, then the action in `allowedActions`: `POST .../start`, `.../complete`, `.../reopen`; dependencies with `PUT` / `DELETE .../dependencies/{dependsOnId}` |
+    | 7 Project: Store | `GET /v1/projects/{projectId}/store` |
+    | 8 Project: Deliveries | `GET /v1/projects/{projectId}/deliveries`; `POST .../deliveries/{id}/record`, `/reject`, `/cancel` (see each delivery's `actions`); send back with `POST /v1/projects/{projectId}/deliveries` |
+    | 9 Project: Members | `GET /v1/projects/{projectId}/members`; `POST .../invitations`, `DELETE .../invitations/{id}`, `PATCH` / `DELETE .../members/{userId}`; find people with `GET /v1/users?search=` |
+    | 10 Company store: Stock | `GET /v1/company-store/stock`, `POST /v1/company-store/stock-additions`, `PATCH /v1/company-store/stock/{materialId}` |
+    | 11 Company store: Deliveries | `GET /v1/company-store/deliveries`, `POST /v1/company-store/deliveries` (pick a project with `GET /v1/company-store/projects`), `POST .../deliveries/{id}/record`, `/reject`, `/cancel` |
+    | Materials catalogue | `GET /v1/materials`, `GET /v1/materials/categories`; store staff `POST`, `PATCH`, `DELETE` |
+servers:
+  - url: http://localhost:8080
+security:
+  - bearer: []
+tags:
+  - name: Accounts
+  - name: Notifications
+  - name: Projects
+  - name: Members
+  - name: Tasks
+  - name: Project store
+  - name: Materials
+  - name: Company store
+  - name: Health
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Is the API up and connected to its database?
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, const: ok}
+
+  # ---------------------------------------------------------------- Accounts
+  /v1/auth/register:
+    post:
+      tags: [Accounts]
+      summary: Create an account and sign in
+      description: |
+        As the brief specifies, the person chooses their app role here,
+        SuperAdmin included. See the README for why this is kept and how it
+        would be locked down in production.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, appRole]
+              properties:
+                name: {type: string, maxLength: 200}
+                email: {type: string, format: email, description: Stored lower-cased.}
+                password: {type: string, minLength: 8, description: 8 characters to 72 bytes.}
+                appRole: {$ref: '#/components/schemas/AppRole'}
+      responses:
+        '201':
+          description: Created and signed in
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SignedIn'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409':
+          description: '`email_taken`'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+
+  /v1/auth/login:
+    post:
+      tags: [Accounts]
+      summary: Sign in with email and password
+      description: |
+        An unknown email and a wrong password give the same 401, after the
+        same amount of work. Ten failures for one email within 15 minutes
+        lock that email for a while (429), registered or not.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: {type: string}
+                password: {type: string}
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SignedIn'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401':
+          description: '`invalid_credentials`'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '429':
+          description: '`too_many_attempts`'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+
+  /v1/auth/refresh:
+    post:
+      tags: [Accounts]
+      summary: Swap a refresh token for a new access token and refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: {type: string}
+      responses:
+        '200':
+          description: New tokens; the old refresh token no longer works
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SignedIn'}
+        '401':
+          description: '`invalid_refresh_token`: used, expired, revoked or malformed. Log in again.'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+
+  /v1/auth/logout:
+    post:
+      tags: [Accounts]
+      summary: End this session
+      responses:
+        '204': {description: Logged out}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+
+  /v1/me:
+    get:
+      tags: [Accounts]
+      summary: The caller's profile and unread notification count
+      responses:
+        '200':
+          description: Profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/User'
+                  - type: object
+                    properties:
+                      unreadNotifications: {type: integer}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+
+  /v1/users:
+    get:
+      tags: [Accounts]
+      summary: Find people to invite, by name or email
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Matching people
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/Person'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+
+  /v1/users/{userId}/role:
+    patch:
+      tags: [Accounts]
+      summary: Change someone's app role (SuperAdmins only)
+      description: Applies to that person's very next request. The last SuperAdmin cannot be demoted (409 `last_super_admin`).
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appRole]
+              properties:
+                appRole: {$ref: '#/components/schemas/AppRole'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  # ----------------------------------------------------------- Notifications
+  /v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: The caller's project invitations, newest first
+      parameters:
+        - name: status
+          in: query
+          description: Comma-separated.
+          schema: {type: string, example: pending}
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/Notification'}
+                      unreadCount: {type: integer}
+
+  /v1/notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: For the badge on every page
+      description: Unread means pending and not yet seen. Withdrawn invitations stop counting.
+      responses:
+        '200':
+          description: Count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unreadCount: {type: integer}
+
+  /v1/notifications/read:
+    post:
+      tags: [Notifications]
+      summary: Mark notifications as seen
+      description: Call when the notifications screen opens. Without a body, marks all.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items: {type: integer}
+      responses:
+        '200':
+          description: The new unread count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unreadCount: {type: integer}
+
+  /v1/invitations/{invitationId}/accept:
+    post:
+      tags: [Notifications]
+      summary: Accept an invitation and join the project
+      description: Only the invitee; anyone else gets 404.
+      parameters:
+        - $ref: '#/components/parameters/InvitationId'
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Notification'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: '`invitation_closed`: already answered or withdrawn'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+
+  /v1/invitations/{invitationId}/reject:
+    post:
+      tags: [Notifications]
+      summary: Reject an invitation
+      parameters:
+        - $ref: '#/components/parameters/InvitationId'
+      responses:
+        '200':
+          description: Rejected
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Notification'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  # ---------------------------------------------------------------- Projects
+  /v1/projects:
+    get:
+      tags: [Projects]
+      summary: Every project the caller can access
+      parameters:
+        - name: search
+          in: query
+          description: Part of the name or the ID.
+          schema: {type: string}
+        - name: hasLateTasks
+          in: query
+          schema: {type: boolean}
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [name, -name, startDate, -startDate, percentDone, -percentDone, lateTasks, -lateTasks]
+            default: name
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Projects
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/Project'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+    post:
+      tags: [Projects]
+      summary: Create a project; the caller becomes its admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, plannedStart, plannedEnd]
+              properties:
+                name: {type: string, maxLength: 200}
+                plannedStart: {type: string, format: date}
+                plannedEnd: {type: string, format: date, description: Not before plannedStart.}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+
+  /v1/projects/{projectId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      summary: One project
+      responses:
+        '200':
+          description: Project
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      tags: [Projects]
+      summary: Rename or reschedule (project admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                plannedStart: {type: string, format: date}
+                plannedEnd: {type: string, format: date}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      tags: [Projects]
+      summary: Remove a project (project admins)
+      description: |
+        Refused (409) while deliveries are in transit (`deliveries_in_transit`)
+        or the project store holds stock (`project_store_not_empty`). The ID
+        is never reused; the company store's delivery history keeps it.
+      responses:
+        '204': {description: Removed}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  # ----------------------------------------------------------------- Members
+  /v1/projects/{projectId}/members:
+    get:
+      tags: [Members]
+      summary: Members and unanswered invitations
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projectId: {type: string}
+                  canManage: {type: boolean, description: True for project admins.}
+                  members:
+                    type: array
+                    items: {$ref: '#/components/schemas/Member'}
+                  pendingInvitations:
+                    type: array
+                    items: {$ref: '#/components/schemas/PendingInvitation'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/projects/{projectId}/members/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/UserId'
+    patch:
+      tags: [Members]
+      summary: Make a member admin, or not (project admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [isAdmin]
+              properties:
+                isAdmin: {type: boolean}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Member'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: '`last_admin`: a project keeps at least one admin'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+    delete:
+      tags: [Members]
+      summary: Remove a member (project admins), or leave (any member, for themselves)
+      description: The removed person loses access on their next request. The last admin cannot be removed or leave (409 `last_admin`).
+      responses:
+        '204': {description: Removed}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /v1/projects/{projectId}/invitations:
+    post:
+      tags: [Members]
+      summary: Invite a registered user (project admins)
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Give userId or email.
+              properties:
+                userId: {type: integer}
+                email: {type: string}
+      responses:
+        '201':
+          description: Invited
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PendingInvitation'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: '`already_member` or `already_invited`'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+
+  /v1/projects/{projectId}/invitations/{invitationId}:
+    delete:
+      tags: [Members]
+      summary: Withdraw an unanswered invitation (project admins)
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/InvitationId'
+      responses:
+        '204': {description: Withdrawn}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  # ------------------------------------------------------------------- Tasks
+  /v1/projects/{projectId}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Tasks]
+      summary: The project's tasks
+      parameters:
+        - name: status
+          in: query
+          description: Comma-separated statuses.
+          schema: {type: string, example: 'not_started,in_progress'}
+        - name: late
+          in: query
+          schema: {type: boolean}
+        - name: blocked
+          in: query
+          schema: {type: boolean}
+        - name: from
+          in: query
+          description: Planned period overlaps [from, to].
+          schema: {type: string, format: date}
+        - name: to
+          in: query
+          schema: {type: string, format: date}
+        - name: search
+          in: query
+          description: Part of the name or the ID.
+          schema: {type: string}
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [id, -id, name, -name, startDate, -startDate, endDate, -endDate, dependents, -dependents]
+            default: id
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Tasks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/Task'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      tags: [Tasks]
+      summary: Create a task (members)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, plannedStart, plannedEnd]
+              properties:
+                name: {type: string, maxLength: 200}
+                plannedStart: {type: string, format: date}
+                plannedEnd: {type: string, format: date}
+                dependsOn:
+                  type: array
+                  description: Task IDs in this project that the new task waits on.
+                  items: {type: string, example: PRJ-0042-T-0001}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskDetails'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/projects/{projectId}/tasks/{taskId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Tasks]
+      summary: Task details
+      responses:
+        '200':
+          description: The task, its allowed actions, and everything upstream and downstream
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskDetails'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      tags: [Tasks]
+      summary: Rename or reschedule a task
+      description: Status changes only through the actions; a `status` field is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                plannedStart: {type: string, format: date}
+                plannedEnd: {type: string, format: date}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskDetails'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      tags: [Tasks]
+      summary: Remove a task
+      description: Refused while other tasks depend on it (409 `task_has_dependents`, with `details.dependents`). Its ID is never reused.
+      responses:
+        '204': {description: Removed}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /v1/projects/{projectId}/tasks/{taskId}/start:
+    post:
+      tags: [Tasks]
+      summary: Not started → In progress
+      description: Only when every task it waits on, directly or indirectly, is done (else 409 `task_blocked`).
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200': {$ref: '#/components/responses/TaskDetails'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /v1/projects/{projectId}/tasks/{taskId}/complete:
+    post:
+      tags: [Tasks]
+      summary: In progress → Done (Mark as done)
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200': {$ref: '#/components/responses/TaskDetails'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /v1/projects/{projectId}/tasks/{taskId}/reopen:
+    post:
+      tags: [Tasks]
+      summary: Done → In progress
+      description: Only while no task waiting on it, directly or indirectly, has started (else 409 `dependents_started`).
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200': {$ref: '#/components/responses/TaskDetails'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /v1/projects/{projectId}/tasks/{taskId}/dependencies/{dependsOnId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/TaskId'
+      - name: dependsOnId
+        in: path
+        required: true
+        description: The task to wait on, in the same project.
+        schema: {type: string, example: PRJ-0042-T-0001}
+    put:
+      tags: [Tasks]
+      summary: Make the task wait on another (idempotent)
+      description: |
+        Refused with 409 when it would make a task wait on itself, directly or
+        through other tasks (`dependency_cycle`), or when the task has started
+        and the other is not done (`task_already_started`). 400 when the other
+        task is in another project.
+      responses:
+        '200': {$ref: '#/components/responses/TaskDetails'}
+        '201': {$ref: '#/components/responses/TaskDetails'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    delete:
+      tags: [Tasks]
+      summary: Stop waiting on that task
+      responses:
+        '204': {description: Removed}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  # ----------------------------------------------------------- Project store
+  /v1/projects/{projectId}/store:
+    get:
+      tags: [Project store]
+      summary: Materials in the project store
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Category'
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [name, -name, quantity, -quantity, lastDelivery, -lastDelivery]
+            default: name
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Stock
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/ProjectStockItem'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/projects/{projectId}/deliveries:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Project store]
+      summary: The project store's deliveries, newest first
+      parameters:
+        - name: direction
+          in: query
+          description: '`incoming` from the company store, `outgoing` back to it.'
+          schema: {type: string, enum: [incoming, outgoing]}
+        - $ref: '#/components/parameters/DeliveryStatus'
+        - $ref: '#/components/parameters/SentFrom'
+        - $ref: '#/components/parameters/SentTo'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Deliveries
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/Delivery'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      tags: [Project store]
+      summary: Send material back to the company store
+      requestBody: {$ref: '#/components/requestBodies/DeliveryLines'}
+      responses:
+        '201': {$ref: '#/components/responses/Delivery'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/InsufficientStock'}
+
+  /v1/projects/{projectId}/deliveries/{deliveryId}:
+    get:
+      tags: [Project store]
+      summary: One delivery of this project
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/projects/{projectId}/deliveries/{deliveryId}/record:
+    post:
+      tags: [Project store]
+      summary: Record an incoming delivery; its quantities join the project store
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/DeliveryConflict'}
+
+  /v1/projects/{projectId}/deliveries/{deliveryId}/reject:
+    post:
+      tags: [Project store]
+      summary: Reject an incoming delivery; its quantities return to the company store
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/DeliveryConflict'}
+
+  /v1/projects/{projectId}/deliveries/{deliveryId}/cancel:
+    post:
+      tags: [Project store]
+      summary: Cancel an outgoing delivery still in transit; its quantities return here
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/DeliveryConflict'}
+
+  # --------------------------------------------------------------- Materials
+  /v1/materials:
+    get:
+      tags: [Materials]
+      summary: The materials catalogue (everyone signed in)
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Category'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Materials, by name
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/Material'}
+    post:
+      tags: [Materials]
+      summary: Add a material (store managers and SuperAdmins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, category, unit]
+              properties:
+                name: {type: string, description: Unique, ignoring case.}
+                category: {type: string}
+                unit: {type: string, example: bag}
+                reorderPoint: {$ref: '#/components/schemas/Quantity'}
+      responses:
+        '201':
+          description: Added; its company stock starts at 0
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Material'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /v1/materials/categories:
+    get:
+      tags: [Materials]
+      summary: Categories, for the category filters
+      responses:
+        '200':
+          description: Categories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        materials: {type: integer}
+
+  /v1/materials/{materialId}:
+    parameters:
+      - $ref: '#/components/parameters/MaterialId'
+    get:
+      tags: [Materials]
+      summary: One material
+      responses:
+        '200':
+          description: Material
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Material'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      tags: [Materials]
+      summary: Edit a material (store managers and SuperAdmins)
+      description: The unit is fixed once stock has been added (409 `unit_in_use`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                category: {type: string}
+                unit: {type: string}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Material'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    delete:
+      tags: [Materials]
+      summary: Remove from the catalogue (store managers and SuperAdmins)
+      description: Refused while any store holds it or a delivery of it is in transit (409 `material_in_use`). Past deliveries keep showing it.
+      responses:
+        '204': {description: Removed}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  # ----------------------------------------------------------- Company store
+  /v1/company-store/stock:
+    get:
+      tags: [Company store]
+      summary: Every material in the company store
+      parameters:
+        - name: status
+          in: query
+          description: Comma-separated.
+          schema: {type: string, example: 'out_of_stock,low_stock'}
+        - $ref: '#/components/parameters/Category'
+        - $ref: '#/components/parameters/Search'
+        - name: sort
+          in: query
+          description: '`status` ascending puts out of stock first, then low stock.'
+          schema:
+            type: string
+            enum: [name, -name, quantity, -quantity, status, -status]
+            default: name
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Stock
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/CompanyStockItem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /v1/company-store/stock/{materialId}:
+    patch:
+      tags: [Company store]
+      summary: Set a material's reorder point
+      parameters:
+        - $ref: '#/components/parameters/MaterialId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reorderPoint]
+              properties:
+                reorderPoint: {$ref: '#/components/schemas/Quantity'}
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CompanyStockItem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/company-store/stock-additions:
+    post:
+      tags: [Company store]
+      summary: Add stock arriving from a supplier (all lines or none)
+      requestBody: {$ref: '#/components/requestBodies/DeliveryLines'}
+      responses:
+        '201':
+          description: The updated stock of each material
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/CompanyStockItem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /v1/company-store/projects:
+    get:
+      tags: [Company store]
+      summary: Projects to deliver to (ID and name only)
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Projects
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/ProjectRef'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /v1/company-store/deliveries:
+    get:
+      tags: [Company store]
+      summary: Deliveries across all projects, newest first (cursor-paged)
+      parameters:
+        - name: projectId
+          in: query
+          schema: {type: string, example: PRJ-0042}
+        - name: direction
+          in: query
+          description: '`incoming` from projects, `outgoing` to projects.'
+          schema: {type: string, enum: [incoming, outgoing]}
+        - $ref: '#/components/parameters/DeliveryStatus'
+        - $ref: '#/components/parameters/SentFrom'
+        - $ref: '#/components/parameters/SentTo'
+        - $ref: '#/components/parameters/Limit'
+        - name: cursor
+          in: query
+          description: '`nextCursor` from the previous page.'
+          schema: {type: string}
+      responses:
+        '200':
+          description: Deliveries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/Delivery'}
+                  limit: {type: integer}
+                  nextCursor: {type: [string, 'null'], description: Null on the last page.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Company store]
+      summary: Send material to a project store
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/LinesInput'
+                - type: object
+                  required: [projectId]
+                  properties:
+                    projectId: {type: string, example: PRJ-0042}
+      responses:
+        '201': {$ref: '#/components/responses/Delivery'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/InsufficientStock'}
+
+  /v1/company-store/deliveries/{deliveryId}:
+    get:
+      tags: [Company store]
+      summary: One delivery
+      parameters:
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/company-store/deliveries/{deliveryId}/record:
+    post:
+      tags: [Company store]
+      summary: Record a delivery coming back from a project; it joins the company store
+      parameters:
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/DeliveryConflict'}
+
+  /v1/company-store/deliveries/{deliveryId}/reject:
+    post:
+      tags: [Company store]
+      summary: Reject a delivery coming back; it returns to the project store
+      parameters:
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/DeliveryConflict'}
+
+  /v1/company-store/deliveries/{deliveryId}/cancel:
+    post:
+      tags: [Company store]
+      summary: Cancel a delivery to a project that is still in transit
+      parameters:
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/DeliveryConflict'}
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: {type: string, example: PRJ-0042}
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      description: A task of this project.
+      schema: {type: string, example: PRJ-0042-T-0137}
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: {type: integer}
+    InvitationId:
+      name: invitationId
+      in: path
+      required: true
+      schema: {type: integer}
+    MaterialId:
+      name: materialId
+      in: path
+      required: true
+      schema: {type: integer}
+    DeliveryId:
+      name: deliveryId
+      in: path
+      required: true
+      schema: {type: integer}
+    Search:
+      name: search
+      in: query
+      description: Matches anywhere in the name.
+      schema: {type: string, maxLength: 100}
+    Category:
+      name: category
+      in: query
+      description: Exact category name, from GET /v1/materials/categories.
+      schema: {type: string}
+    DeliveryStatus:
+      name: status
+      in: query
+      description: Comma-separated.
+      schema: {type: string, example: in_transit}
+    SentFrom:
+      name: from
+      in: query
+      description: Sent on or after this date.
+      schema: {type: string, format: date}
+    SentTo:
+      name: to
+      in: query
+      description: Sent on or before this date.
+      schema: {type: string, format: date}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+    Offset:
+      name: offset
+      in: query
+      schema: {type: integer, minimum: 0, default: 0}
+
+  requestBodies:
+    DeliveryLines:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/LinesInput'}
+
+  responses:
+    BadRequest:
+      description: '`bad_request`; `details.fields` names each invalid field'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unauthenticated:
+      description: '`unauthenticated`, `token_expired` (refresh) or `session_ended` (log in)'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Forbidden:
+      description: '`forbidden`: the caller may see this but not do it'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: '`not_found`: does not exist, or the caller may not know it exists'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: The request is valid but the current state does not allow it; see `code`
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    InsufficientStock:
+      description: '`insufficient_stock`; `details.shortages` lists each short material. Nothing moved.'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    DeliveryConflict:
+      description: '`delivery_closed` (no longer in transit), `not_receiver` or `not_sender`'
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    TaskDetails:
+      description: The task after the change
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/TaskDetails'}
+    Delivery:
+      description: The delivery
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Delivery'}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, example: not_found}
+            message: {type: string}
+            details: {type: object}
+
+    Page:
+      type: object
+      properties:
+        total: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
+
+    AppRole:
+      type: string
+      enum: [user, store_manager, super_admin]
+
+    Quantity:
+      type: number
+      minimum: 0
+      description: Up to 3 decimals. Numbers or decimal strings are accepted.
+      example: 12.5
+
+    User:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        email: {type: string}
+        appRole: {$ref: '#/components/schemas/AppRole'}
+        createdAt: {type: string, format: date-time}
+
+    Person:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        email: {type: string}
+
+    PersonRef:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+
+    SignedIn:
+      type: object
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        accessToken: {type: string}
+        accessTokenExpiresAt: {type: string, format: date-time}
+        refreshToken: {type: string}
+        refreshTokenExpiresAt: {type: string, format: date-time}
+
+    ProjectRef:
+      type: object
+      properties:
+        id: {type: string, example: PRJ-0042}
+        name: {type: string}
+
+    Project:
+      type: object
+      properties:
+        id: {type: string, example: PRJ-0042}
+        name: {type: string}
+        plannedStart: {type: string, format: date}
+        plannedEnd: {type: string, format: date}
+        isMember: {type: boolean, description: False for a SuperAdmin viewing someone else's project.}
+        isAdmin: {type: boolean}
+        memberCount: {type: integer}
+        taskCounts:
+          type: object
+          properties:
+            notStarted: {type: integer}
+            inProgress: {type: integer}
+            done: {type: integer}
+            total: {type: integer}
+        percentDone: {type: number, description: 'Done tasks / all tasks x 100, one decimal; 0 with no tasks.'}
+        lateTasks: {type: integer}
+        blockedTasks: {type: integer}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+
+    Member:
+      type: object
+      properties:
+        userId: {type: integer}
+        name: {type: string}
+        email: {type: string}
+        isAdmin: {type: boolean}
+        joinedAt: {type: string, format: date-time}
+
+    PendingInvitation:
+      type: object
+      properties:
+        id: {type: integer}
+        userId: {type: integer}
+        name: {type: string}
+        email: {type: string}
+        invitedBy: {$ref: '#/components/schemas/PersonRef'}
+        createdAt: {type: string, format: date-time}
+
+    Notification:
+      type: object
+      properties:
+        id: {type: integer, description: The invitation ID.}
+        type: {type: string, const: project_invitation}
+        status: {type: string, enum: [pending, accepted, rejected, withdrawn]}
+        read: {type: boolean}
+        createdAt: {type: string, format: date-time}
+        answeredAt: {type: [string, 'null'], format: date-time}
+        project: {$ref: '#/components/schemas/ProjectRef'}
+        invitedBy: {$ref: '#/components/schemas/PersonRef'}
+        actions:
+          type: array
+          description: '`accept` and `reject` while pending, else empty.'
+          items: {type: string, enum: [accept, reject]}
+
+    TaskStatus:
+      type: string
+      enum: [not_started, in_progress, done]
+
+    Task:
+      type: object
+      properties:
+        id: {type: string, example: PRJ-0042-T-0137}
+        number: {type: integer, example: 137}
+        name: {type: string}
+        plannedStart: {type: string, format: date}
+        plannedEnd: {type: string, format: date}
+        status: {$ref: '#/components/schemas/TaskStatus'}
+        late:
+          type: boolean
+          description: Not done and the planned end has passed, or not started and the planned start has passed.
+        blocked:
+          type: boolean
+          description: Not done, and some task it waits on (directly or indirectly) is not done.
+        dependsOn:
+          type: array
+          description: The tasks it directly waits on.
+          items: {type: string}
+        dependentsCount: {type: integer, description: How many tasks directly wait on it.}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+
+    RelatedTask:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        status: {$ref: '#/components/schemas/TaskStatus'}
+        plannedStart: {type: string, format: date}
+        plannedEnd: {type: string, format: date}
+        late: {type: boolean}
+        blocked: {type: boolean}
+        distance: {type: integer, description: Steps away; 1 for a direct dependency.}
+
+    TaskDetails:
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          properties:
+            allowedActions:
+              type: array
+              description: The status actions allowed right now.
+              items: {type: string, enum: [start, complete, reopen]}
+            waitsOn:
+              type: array
+              description: Every task it waits on, directly or indirectly, nearest first.
+              items: {$ref: '#/components/schemas/RelatedTask'}
+            waitedOnBy:
+              type: array
+              description: Every task waiting on it, directly or indirectly, nearest first.
+              items: {$ref: '#/components/schemas/RelatedTask'}
+
+    Material:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string, example: 'Cement OPC 42.5N 50 kg'}
+        category: {type: string, example: Cement & Concrete}
+        unit: {type: string, example: bag}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+
+    CompanyStockItem:
+      type: object
+      properties:
+        materialId: {type: integer}
+        name: {type: string}
+        category: {type: string}
+        unit: {type: string}
+        quantity: {type: number}
+        inTransitToProjects: {type: number}
+        reorderPoint: {type: number}
+        status:
+          type: string
+          enum: [out_of_stock, low_stock, available]
+          description: Out of stock at 0; low at or below the reorder point; available above it.
+
+    ProjectStockItem:
+      type: object
+      properties:
+        materialId: {type: integer}
+        name: {type: string}
+        category: {type: string}
+        unit: {type: string}
+        quantity: {type: number}
+        lastDeliveryAt: {type: string, format: date-time, description: The last delivery of it into (recorded) or out of (sent) this store.}
+
+    LinesInput:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            type: object
+            required: [materialId, quantity]
+            properties:
+              materialId: {type: integer}
+              quantity:
+                type: number
+                exclusiveMinimum: 0
+                description: Up to 3 decimals. Each material at most once.
+        note: {type: string, maxLength: 1000}
+
+    Delivery:
+      type: object
+      properties:
+        id: {type: integer}
+        project: {$ref: '#/components/schemas/ProjectRef'}
+        direction:
+          type: string
+          enum: [to_project, to_company]
+        flow:
+          type: string
+          enum: [incoming, outgoing]
+          description: Relative to the store whose screen asked.
+        status:
+          type: string
+          enum: [in_transit, delivered, rejected, cancelled]
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              materialId: {type: integer}
+              name: {type: string}
+              unit: {type: string}
+              quantity: {type: number}
+        note: {type: [string, 'null']}
+        sentAt: {type: string, format: date-time}
+        sentBy: {$ref: '#/components/schemas/PersonRef'}
+        receivedAt: {type: [string, 'null'], format: date-time, description: Set when delivered.}
+        receivedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        closedAt: {type: [string, 'null'], format: date-time, description: When it stopped being in transit, whichever way.}
+        closedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        actions:
+          type: array
+          description: What this store may do now. `record` and `reject` for the receiver, `cancel` for the sender, while in transit.
+          items: {type: string, enum: [record, reject, cancel]}

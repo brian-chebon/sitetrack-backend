@@ -263,4 +263,16 @@ void main() {
     expect(found.items, hasLength(1));
     expect(found.text, isNot(contains('password')));
   });
+
+  test(
+    'the API description and docs page are served without a session',
+    () async {
+      final spec = await api().get('/openapi.yaml');
+      expect(spec.status, 200);
+      expect(spec.text, startsWith('openapi: 3.1.0'));
+      final page = await api().get('/docs');
+      expect(page.status, 200);
+      expect(page.text, contains('/openapi.yaml'));
+    },
+  );
 }

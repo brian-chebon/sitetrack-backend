@@ -87,6 +87,7 @@ services:
       target: test
     environment:
       TEST_DATABASE_URL: postgres://sitetrack:sitetrack@db:5432/postgres?sslmode=disable
+      BASE_URL: http://api:8080
     depends_on:
       db:
         condition: service_healthy
