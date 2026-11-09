@@ -13,6 +13,7 @@ import 'http/middleware.dart';
 import 'notifications/notification_routes.dart';
 import 'projects/member_routes.dart';
 import 'projects/project_routes.dart';
+import 'stock/material_routes.dart';
 import 'tasks/task_routes.dart';
 import 'users/user_routes.dart';
 
@@ -32,6 +33,7 @@ Handler buildApp(Database db, Config config) {
   final members = MemberRoutes(db);
   final notifications = NotificationRoutes(db);
   final tasks = TaskRoutes(db);
+  final materials = MaterialRoutes(db);
 
   final protected = Router(notFoundHandler: _notFound)
     ..post('/auth/logout', authRoutes.logout)
@@ -75,7 +77,14 @@ Handler buildApp(Database db, Config config) {
     ..delete(
       '/projects/<projectId>/tasks/<taskId>/dependencies/<dependsOnId>',
       tasks.removeDependency,
-    );
+    )
+    // Materials catalogue
+    ..get('/materials', materials.list)
+    ..get('/materials/categories', materials.categories)
+    ..post('/materials', materials.create)
+    ..get('/materials/<materialId>', materials.get)
+    ..patch('/materials/<materialId>', materials.update)
+    ..delete('/materials/<materialId>', materials.remove);
 
   final root = Router(notFoundHandler: _notFound)
     ..get('/health', (Request request) async {
