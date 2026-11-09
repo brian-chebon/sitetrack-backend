@@ -10,6 +10,9 @@ import 'db/database.dart';
 import 'http/api_error.dart';
 import 'http/json.dart';
 import 'http/middleware.dart';
+import 'notifications/notification_routes.dart';
+import 'projects/member_routes.dart';
+import 'projects/project_routes.dart';
 import 'users/user_routes.dart';
 
 /// Builds the API's request handler.
@@ -24,12 +27,36 @@ Handler buildApp(Database db, Config config) {
 
   final authRoutes = AuthRoutes(auth);
   final users = UserRoutes(db);
+  final projects = ProjectRoutes(db);
+  final members = MemberRoutes(db);
+  final notifications = NotificationRoutes(db);
 
   final protected = Router(notFoundHandler: _notFound)
     ..post('/auth/logout', authRoutes.logout)
     ..get('/me', users.me)
     ..get('/users', users.search)
-    ..patch('/users/<userId>/role', users.changeRole);
+    ..patch('/users/<userId>/role', users.changeRole)
+    // Notifications and invitations addressed to the caller
+    ..get('/notifications', notifications.list)
+    ..get('/notifications/unread-count', notifications.unreadCount)
+    ..post('/notifications/read', notifications.markRead)
+    ..post('/invitations/<invitationId>/accept', notifications.accept)
+    ..post('/invitations/<invitationId>/reject', notifications.reject)
+    // Projects
+    ..get('/projects', projects.list)
+    ..post('/projects', projects.create)
+    ..get('/projects/<projectId>', projects.get)
+    ..patch('/projects/<projectId>', projects.update)
+    ..delete('/projects/<projectId>', projects.remove)
+    // Members and invitations
+    ..get('/projects/<projectId>/members', members.list)
+    ..patch('/projects/<projectId>/members/<userId>', members.update)
+    ..delete('/projects/<projectId>/members/<userId>', members.remove)
+    ..post('/projects/<projectId>/invitations', members.invite)
+    ..delete(
+      '/projects/<projectId>/invitations/<invitationId>',
+      members.withdraw,
+    );
 
   final root = Router(notFoundHandler: _notFound)
     ..get('/health', (Request request) async {
