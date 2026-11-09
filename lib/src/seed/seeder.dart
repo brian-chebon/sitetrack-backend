@@ -196,11 +196,14 @@ class Seeder {
       INSERT INTO project_members (project_id, user_id, is_admin, joined_at)
       SELECT id, created_by, true, created_at FROM projects;
 
+      -- Others at random, leaving out the demo user (ID 3), whose projects
+      -- are set below so the README can say exactly which they are.
       INSERT INTO project_members (project_id, user_id, is_admin, joined_at)
-      SELECT pr.id, 1 + ((pr.id * 7 + j * 1543) % ${p.users}), j <= 2,
-             pr.created_at + j * interval '2 days'
+      SELECT pr.id, u.id, j <= 2, pr.created_at + j * interval '2 days'
         FROM projects pr
        CROSS JOIN LATERAL generate_series(1, 2 + (pr.id * 13) % ${p.maxExtraMembers}) j
+       CROSS JOIN LATERAL (SELECT 1 + ((pr.id * 7 + j * 1543) % ${p.users}) AS id) u
+       WHERE u.id <> 3
       ON CONFLICT DO NOTHING;
 
       -- The demo user is in every 50th project and admin of every 100th.
