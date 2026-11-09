@@ -22,24 +22,7 @@ class Database {
     required int maxConnections,
     String timeZone = 'UTC',
   }) {
-    // Pool.withUrl cannot set a query timeout, so the URL is parsed here.
-    final uri = Uri.parse(url);
-    if (uri.scheme != 'postgres' && uri.scheme != 'postgresql') {
-      throw FormatException('DATABASE_URL must start with postgres://');
-    }
-    final userInfo = uri.userInfo.split(':');
-    final endpoint = Endpoint(
-      host: uri.host,
-      port: uri.hasPort ? uri.port : 5432,
-      database: uri.pathSegments.isEmpty ? 'postgres' : uri.pathSegments.first,
-      username: userInfo.isEmpty ? null : Uri.decodeComponent(userInfo.first),
-      password: userInfo.length < 2 ? null : Uri.decodeComponent(userInfo[1]),
-    );
-    final sslMode = switch (uri.queryParameters['sslmode']) {
-      'disable' => SslMode.disable,
-      'verify-full' => SslMode.verifyFull,
-      _ => SslMode.require,
-    };
+    final (endpoint, sslMode) = parseDatabaseUrl(url);
     return Database._(
       Pool<void>.withEndpoints(
         [endpoint],
@@ -87,4 +70,27 @@ class Database {
   }
 
   Future<void> close() => pool.close();
+}
+
+/// Splits a `postgres://user:password@host:port/database?sslmode=...` URL into
+/// what package:postgres needs. (Pool.withUrl cannot set a query timeout.)
+(Endpoint, SslMode) parseDatabaseUrl(String url) {
+  final uri = Uri.parse(url);
+  if (uri.scheme != 'postgres' && uri.scheme != 'postgresql') {
+    throw FormatException('DATABASE_URL must start with postgres://');
+  }
+  final userInfo = uri.userInfo.split(':');
+  final endpoint = Endpoint(
+    host: uri.host,
+    port: uri.hasPort ? uri.port : 5432,
+    database: uri.pathSegments.isEmpty ? 'postgres' : uri.pathSegments.first,
+    username: userInfo.isEmpty ? null : Uri.decodeComponent(userInfo.first),
+    password: userInfo.length < 2 ? null : Uri.decodeComponent(userInfo[1]),
+  );
+  final sslMode = switch (uri.queryParameters['sslmode']) {
+    'disable' => SslMode.disable,
+    'verify-full' => SslMode.verifyFull,
+    _ => SslMode.require,
+  };
+  return (endpoint, sslMode);
 }

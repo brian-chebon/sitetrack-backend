@@ -9,6 +9,28 @@ services:
       POSTGRES_DB: sitetrack
       POSTGRES_USER: sitetrack
       POSTGRES_PASSWORD: sitetrack
+    # Sized for one small server running both the API and the database
+    # (2 vCPU, 4 GB RAM): the seeded database is about 700 MB, so it fits in
+    # shared buffers. JIT is off because it slows short queries down.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=3GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - jit=off
+      - -c
+      - max_connections=50
+    # Parallel queries share memory through /dev/shm; Docker's default 64 MB
+    # is too small for them.
+    shm_size: 512mb
     volumes:
       # Postgres 18 images keep data under /var/lib/postgresql/<major>/.
       - db-data:/var/lib/postgresql
@@ -41,6 +63,20 @@ services:
       retries: 12
       start_period: 10s
     restart: unless-stopped
+
+  # Not started by `up`. `docker compose run --rm seed` fills the database
+  # with the brief's test volumes (about three minutes); add `--scale 0.1`
+  # for a tenth, `--reset` to wipe existing data first.
+  seed:
+    profiles: [seed]
+    image: sitetrack-api
+    build: .
+    entrypoint: ["/app/seed"]
+    environment:
+      DATABASE_URL: postgres://sitetrack:sitetrack@db:5432/sitetrack?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
 
   # Not started by `up`. `docker compose run --rm test` runs the integration
   # tests; each test file creates and drops its own database on the db server.
