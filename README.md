@@ -27,7 +27,7 @@ That builds the API, starts Postgres 18 and the API, and applies the schema. The
 | **API documentation** | <http://localhost:8080/docs> (OpenAPI 3.1, file in [`docs/openapi.yaml`](docs/openapi.yaml)). It opens with the sign-in flow, the access rules, and a table mapping each screen in the brief to its calls. |
 | **Load data at scale** | `docker compose run --rm seed` fills the database with the brief's test volumes in about three minutes (`--scale 0.1` for a tenth, `--reset` to wipe and reload). |
 | **Seeded logins** | Password `sitetrack-demo` for every seeded account. `superadmin@sitetrack.test` (SuperAdmin), `manager@sitetrack.test` (store manager), `user@sitetrack.test` (member of every 50th project, admin of every 100th, with open invitations). |
-| **Tests** | `docker compose run --rm test`: 57 integration tests against a real Postgres. Each test file creates and drops its own database. With a local Dart SDK, `dart test` uses `TEST_DATABASE_URL` (default: a Postgres on `127.0.0.1:55432` with user and password `sitetrack`, e.g. `docker run -d -p 127.0.0.1:55432:5432 -e POSTGRES_USER=sitetrack -e POSTGRES_PASSWORD=sitetrack postgres:18-alpine`). |
+| **Tests** | `docker compose run --rm test`: 62 tests. 58 are integration tests against a real Postgres, where each test file creates and drops its own database; the rest are unit tests for the login limits. With a local Dart SDK, `dart test` uses `TEST_DATABASE_URL` (default: a Postgres on `127.0.0.1:55432` with user and password `sitetrack`, e.g. `docker run -d -p 127.0.0.1:55432:5432 -e POSTGRES_USER=sitetrack -e POSTGRES_PASSWORD=sitetrack postgres:18-alpine`). |
 | **Benchmark** | `docker compose run --rm test dart run tool/bench.dart` times every screen against the seeded API. |
 | **Look inside** | `docker compose exec db psql -U sitetrack`. Postgres is not published to the host, so a local Postgres cannot clash. |
 | **Stop** | `docker compose down` (add `-v` to delete the data). |
@@ -283,6 +283,6 @@ lib/src/seed/              the seed plan and the SQL that generates the data
 lib/src/http/              validation, JSON, errors, paging, middleware, the docs page
 migrations/                the schema, as SQL with the reasoning next to each table
 docs/openapi.yaml          the API description served at /docs
-test/                      integration tests (one database per file)
+test/                      integration tests (one database per file), login-limit unit tests
 tool/bench.dart            the screen benchmark
 ```
