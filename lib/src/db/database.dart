@@ -14,7 +14,14 @@ class Database {
   ///
   /// Connections are opened lazily; call [waitUntilReady] to block until the
   /// server accepts them.
-  factory Database.open(String url, {required int maxConnections}) {
+  ///
+  /// [timeZone] becomes the session time zone, so `current_date` in SQL is the
+  /// company's calendar date. Timestamps are unaffected: they travel as UTC.
+  factory Database.open(
+    String url, {
+    required int maxConnections,
+    String timeZone = 'UTC',
+  }) {
     // Pool.withUrl cannot set a query timeout, so the URL is parsed here.
     final uri = Uri.parse(url);
     if (uri.scheme != 'postgres' && uri.scheme != 'postgresql') {
@@ -40,6 +47,7 @@ class Database {
           maxConnectionCount: maxConnections,
           sslMode: sslMode,
           applicationName: 'sitetrack-api',
+          timeZone: timeZone,
           connectTimeout: const Duration(seconds: 5),
           // Every request is a handful of indexed queries; anything slower
           // than this is a bug, not a workload.

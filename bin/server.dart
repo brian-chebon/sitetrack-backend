@@ -17,9 +17,17 @@ Future<void> main(List<String> args) async {
     exit(await _healthcheck(config.port));
   }
 
+  if (config.jwtSecretGenerated) {
+    stdout.writeln(
+      'JWT_SECRET is not set; signing access tokens with a random key. '
+      'Clients refresh their tokens after a restart.',
+    );
+  }
+
   final db = Database.open(
     config.databaseUrl,
     maxConnections: config.dbPoolSize,
+    timeZone: config.timeZone,
   );
   await db.waitUntilReady();
 
@@ -31,7 +39,7 @@ Future<void> main(List<String> args) async {
   );
 
   final server = await shelf_io.serve(
-    buildApp(db),
+    buildApp(db, config),
     InternetAddress.anyIPv4,
     config.port,
   );

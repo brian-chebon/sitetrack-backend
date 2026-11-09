@@ -36,3 +36,20 @@ Middleware logRequestTimings() =>
       );
       return response;
     };
+
+/// Lets a browser frontend on another origin call the API. Tokens travel in
+/// the Authorization header, not cookies, so allowing any origin does not
+/// expose anyone to cross-site request forgery.
+Middleware cors() {
+  const headers = {
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'access-control-allow-headers': 'authorization, content-type',
+    'access-control-max-age': '86400',
+  };
+  return (inner) => (request) async {
+    if (request.method == 'OPTIONS') return Response(204, headers: headers);
+    final response = await inner(request);
+    return response.change(headers: headers);
+  };
+}
