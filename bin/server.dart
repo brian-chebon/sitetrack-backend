@@ -5,8 +5,9 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:sitetrack/src/app.dart';
 import 'package:sitetrack/src/config.dart';
 import 'package:sitetrack/src/db/database.dart';
+import 'package:sitetrack/src/db/migrator.dart';
 
-/// Starts the API: waits for Postgres, then serves.
+/// Starts the API: waits for Postgres, applies pending migrations, serves.
 Future<void> main() async {
   final config = Config.fromEnvironment();
 
@@ -15,6 +16,13 @@ Future<void> main() async {
     maxConnections: config.dbPoolSize,
   );
   await db.waitUntilReady();
+
+  final applied = await Migrator(db, Directory(config.migrationsDir)).migrate();
+  stdout.writeln(
+    applied.isEmpty
+        ? 'Schema is up to date'
+        : 'Applied migrations: ${applied.join(', ')}',
+  );
 
   final server = await shelf_io.serve(
     buildApp(db),

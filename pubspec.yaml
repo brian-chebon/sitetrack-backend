@@ -7,6 +7,7 @@ environment:
   sdk: ^3.9.0
 
 dependencies:
+  crypto: ^3.0.8
   # 3.6.0 (released 2026-11-04) changes how pooled connections are reset; stay on 3.5
   # until it has settled.
   postgres: 3.5.20
